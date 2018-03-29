@@ -1,0 +1,22 @@
+*.class
+*.jar
+*.war
+*.zip
+*.tar.gz
+*.ear
+*.log
+*.svn
+*.iml
+.classpath
+.project
+.DS_Store
+
+# Package Files #
+.svn
+.idea
+.settings
+target
+.zookeeper
+cache
+configuration
+**/*.conf
