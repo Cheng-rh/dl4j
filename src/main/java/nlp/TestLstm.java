@@ -35,7 +35,6 @@ import org.nd4j.linalg.dataset.DataSet;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 import scala.Tuple2;
-
 import java.io.Serializable;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -60,7 +59,7 @@ public class TestLstm implements Serializable {
 
     private static Integer numLabel = 2;
 
-    private static Integer VOCAB_SIZE = 0;
+    private static AtomicInteger VOCAB_SIZE = new AtomicInteger(0);
 
     private static Integer batchSize = 36;
 
@@ -153,7 +152,7 @@ public class TestLstm implements Serializable {
         JavaRDD<Integer> map = textList.map(new Function<List<VocabWord>, Integer>() {
             public Integer call(List<VocabWord> vocabWords) throws Exception {
                 int size = vocabWords.size();
-                VOCAB_SIZE += size;
+                VOCAB_SIZE.addAndGet(size);
                 if (maxlength < size) {
                     maxlength = size;
                 }
@@ -207,12 +206,12 @@ public class TestLstm implements Serializable {
                 .l2(5 * 1e-4)
                 .updater(Updater.ADAM)
                 .list()
-                .layer(0, new EmbeddingLayer.Builder().nIn(VOCAB_SIZE).nOut(lstmLayerSize).activation(Activation.IDENTITY).build())
+                .layer(0, new EmbeddingLayer.Builder().nIn(VOCAB_SIZE.get()).nOut(lstmLayerSize).activation(Activation.IDENTITY).build())
                 .layer(1, new GravesLSTM.Builder().nIn(lstmLayerSize).nOut(lstmLayerSize).activation(Activation.SOFTSIGN).build())
                 .layer(2, new RnnOutputLayer.Builder(LossFunctions.LossFunction.MCXENT)
                         .activation(Activation.SOFTMAX).nIn(lstmLayerSize).nOut(nOut).build())
                 .pretrain(false).backprop(true)
-                .setInputType(InputType.recurrent(VOCAB_SIZE))
+                .setInputType(InputType.recurrent(VOCAB_SIZE.get()))
                 .build();
 
         ParameterAveragingTrainingMaster trainMaster = new ParameterAveragingTrainingMaster.Builder(batchSize)

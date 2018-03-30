@@ -15,9 +15,16 @@
         <datavec.spark.version>0.8.0_spark_2</datavec.spark.version>
         <dl4j.spark.version>0.8.0_spark_2</dl4j.spark.version>
         <nd4j.version>0.8.0</nd4j.version>
+        <jcommander.version>1.27</jcommander.version>
     </properties>
 
     <dependencies>
+
+        <dependency>
+            <groupId>com.beust</groupId>
+            <artifactId>jcommander</artifactId>
+            <version>${jcommander.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>commons-lang</groupId>
