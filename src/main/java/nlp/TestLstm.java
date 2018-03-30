@@ -29,6 +29,7 @@ import org.deeplearning4j.spark.text.functions.TextPipeline;
 import org.deeplearning4j.text.tokenization.tokenizer.preprocessor.CommonPreprocessor;
 import org.deeplearning4j.text.tokenization.tokenizerfactory.DefaultTokenizerFactory;
 import org.deeplearning4j.util.ModelSerializer;
+import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.dataset.DataSet;
 import org.nd4j.linalg.factory.Nd4j;
@@ -59,11 +60,15 @@ public class TestLstm implements Serializable {
 
     private static Integer numLabel = 2;
 
-    private static Integer VOCAB_SIZE = 512;
+    private static Integer VOCAB_SIZE = 0;
 
     private static Integer batchSize = 36;
 
     private static Integer totalEpoch = 4;
+
+    private static Integer lstmLayerSize = 256;
+
+    private static Integer nOut = 2;
 
     public TestLstm() {
         SparkConf sparkConf = new SparkConf();
@@ -81,7 +86,7 @@ public class TestLstm implements Serializable {
     }
 
 
-    public JavaRDD<Tuple2<String, String>> readFile2(String path) {
+    public JavaRDD<Tuple2<String, String>> readFile(String path) {
         JavaRDD<String> javaRDD = jsc.textFile(path);
         JavaRDD<Tuple2<String, String>> rdd = javaRDD.map(new Function<String, Tuple2<String, String>>() {
             public Tuple2<String, String> call(String s) throws Exception {
@@ -144,10 +149,11 @@ public class TestLstm implements Serializable {
         return res;
     }
 
-    public Integer findMaxlength(JavaRDD<List<VocabWord>> textList) {
+    public void findMaxlength(JavaRDD<List<VocabWord>> textList) {
         JavaRDD<Integer> map = textList.map(new Function<List<VocabWord>, Integer>() {
             public Integer call(List<VocabWord> vocabWords) throws Exception {
                 int size = vocabWords.size();
+                VOCAB_SIZE += size;
                 if (maxlength < size) {
                     maxlength = size;
                 }
@@ -155,7 +161,8 @@ public class TestLstm implements Serializable {
             }
         });
         map.count();
-        return maxlength;
+        System.out.println("词表的长度为：" + VOCAB_SIZE);
+        System.out.println("预料的最大维度为：" + maxlength);
     }
 
     public JavaRDD<DataSet> chang2DataSet(JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine) {
@@ -200,10 +207,10 @@ public class TestLstm implements Serializable {
                 .l2(5 * 1e-4)
                 .updater(Updater.ADAM)
                 .list()
-                .layer(0, new EmbeddingLayer.Builder().nIn(VOCAB_SIZE).nOut(512).activation("identity").build())
-                .layer(1, new GravesLSTM.Builder().nIn(512).nOut(512).activation("softsign").build())
+                .layer(0, new EmbeddingLayer.Builder().nIn(VOCAB_SIZE).nOut(lstmLayerSize).activation(Activation.IDENTITY).build())
+                .layer(1, new GravesLSTM.Builder().nIn(lstmLayerSize).nOut(lstmLayerSize).activation(Activation.SOFTSIGN).build())
                 .layer(2, new RnnOutputLayer.Builder(LossFunctions.LossFunction.MCXENT)
-                        .activation("softmax").nIn(512).nOut(2).build())
+                        .activation(Activation.SOFTMAX).nIn(lstmLayerSize).nOut(nOut).build())
                 .pretrain(false).backprop(true)
                 .setInputType(InputType.recurrent(VOCAB_SIZE))
                 .build();
@@ -239,16 +246,18 @@ public class TestLstm implements Serializable {
 
     public static void main(String[] args) {
         TestLstm testLstm = new TestLstm();
-        String path = "file:///C:/Users/sssd/Desktop/LSTM/sourcedata.txt";
+        String path = "file:///C:/Users/sssd/Desktop/LSTM/data.txt";
         String savePath = "file:///C:/Users/sssd/Desktop/LSTM/model.txt";
-        JavaRDD<Tuple2<String, String>> data = testLstm.readFile2(path);
+        JavaRDD<Tuple2<String, String>> data = testLstm.readFile(path).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
         JavaRDD<String> label = testLstm.readLabel(data);
         JavaRDD<String> text = testLstm.readText(data);
+        data.unpersist();
         JavaRDD<List<VocabWord>> labelList = testLstm.pipeLine(label);
         JavaRDD<List<VocabWord>> textList = testLstm.pipeLine(text);
-        JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine = testLstm.combine(labelList, textList);
         testLstm.findMaxlength(textList);
+        JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine = testLstm.combine(labelList, textList);
         JavaRDD<DataSet> trainData = testLstm.chang2DataSet(combine).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
+        combine.unpersist();
         try {
             testLstm.modelTrain(trainData, savePath);
         } catch (Exception e) {
