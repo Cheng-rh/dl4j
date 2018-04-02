@@ -1,6 +1,13 @@
 package nlp;
 
 
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+import com.huaban.analysis.jieba.JiebaSegmenter;
+import com.huaban.analysis.jieba.SegToken;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -9,6 +16,8 @@ import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.Function;
 import org.apache.spark.broadcast.Broadcast;
+import org.apache.spark.mllib.linalg.Vector;
+import org.apache.spark.mllib.linalg.Vectors;
 import org.apache.spark.storage.StorageLevel;
 import org.deeplearning4j.eval.Evaluation;
 import org.deeplearning4j.models.embeddings.loader.VectorsConfiguration;
@@ -37,6 +46,9 @@ import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 import scala.Tuple2;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -60,12 +72,14 @@ public class SparkLstm {
 
     private static AtomicInteger VOCAB_SIZE = new AtomicInteger(0);
 
+    private static JavaSparkContext jsc;
 
-    public void entryPoint(String[] args) throws Exception {
+
+    public void modelTrain(String[] args) throws Exception {
 
         SparkConf sparkConf = new SparkConf();
         sparkConf.setMaster("local[*]").setAppName("deeplearning4j-lstm");
-        JavaSparkContext jsc = new JavaSparkContext(sparkConf);
+        jsc = new JavaSparkContext(sparkConf);
 
         String inputPath = "file:///C:/Users/sssd/Desktop/LSTM/data.txt";
         String savePath = "file:///C:/Users/sssd/Desktop/LSTM/model.txt";
@@ -138,11 +152,39 @@ public class SparkLstm {
         initTokenizer(jsc);
         JavaRDD<List<VocabWord>> labelList = pipeLine(label);
         JavaRDD<List<VocabWord>> textList = pipeLine(text);
+        savaPipeLine(textList);
         findMaxlength(textList);
         JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine = combine(labelList, textList);
         JavaRDD<DataSet> data = chang2DataSet(combine).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
         sourceData.unpersist();
         return data;
+    }
+
+    public static void savaPipeLine(JavaRDD<List<VocabWord>> textList) {
+        List<List<VocabWord>> collect = textList.collect();
+        StringBuffer bf = new StringBuffer();
+        FileWriter fileWriter = null;
+        try {
+            fileWriter = new FileWriter("C:\\Users\\hui\\Desktop\\pipeLine.txt");
+            JSONArray objects = new JSONArray();
+            for (List<VocabWord> list : collect) {
+                for (VocabWord vocabWord : list) {
+                    objects.add(vocabWord.toJSON());
+                }
+                bf.append(objects.toString()).append("\n");
+            }
+            bf.deleteCharAt(bf.length() - 1);
+            fileWriter.write(bf.toString());
+            fileWriter.flush();
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                fileWriter.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
 
@@ -267,8 +309,53 @@ public class SparkLstm {
     }
 
 
+    public void modelPre(String str) {
+
+        JiebaSegmenter segmenter = new JiebaSegmenter();
+        List<SegToken> tokens = segmenter.process(str, JiebaSegmenter.SegMode.INDEX);
+        ArrayList<String> list = new ArrayList<String>();
+        for (SegToken token : tokens) {
+            String word = token.word;
+            list.add(word);
+        }
+    }
+
+    public void str2Vecctor(ArrayList<String> list) {
+        ArrayList<JSONArray> allLines = new ArrayList<JSONArray>();
+        try {
+            List<String> lines = FileUtils.readLines(new File("C:\\Users\\hui\\Desktop\\pipeLine.txt"));
+            for (String line : lines) {
+                JSONArray jsonArray = (JSONArray) JSON.parse(line);
+                allLines.add(jsonArray);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        double[] doubles = new double[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            String tempStr = list.get(i);
+            for (JSONArray line : allLines) {
+                for (Object o : line) {
+                    JSONObject jsonObject = (JSONObject) o;
+                    if (jsonObject.getString("word").equals(tempStr)){
+                        doubles[i] = Double.parseDouble(jsonObject.getString("index"));
+                        break;
+                    }
+                }
+                if (StringUtils.isNoneBlank(String.valueOf(doubles[i]))){
+                    break;
+                }
+            }
+
+        }
+        Vectors.dense(doubles);
+    }
+
+
     public static void main(String[] args) throws Exception {
-        new SparkLstm().entryPoint(args);
+        new SparkLstm().modelTrain(args);
+        String str = "这个产品很好！";
+        new SparkLstm().modelPre(str);
     }
 
 }

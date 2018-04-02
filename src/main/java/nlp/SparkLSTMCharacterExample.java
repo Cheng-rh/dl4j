@@ -1,3 +1,4 @@
+/*
 package nlp;
 
 import com.beust.jcommander.JCommander;
@@ -36,6 +37,7 @@ import java.net.URL;
 import java.nio.charset.Charset;
 import java.util.*;
 
+*/
 /**
  * GravesLSTM + Spark character modelling example
  * Example: Train a LSTM RNN to generates text, one character at a time.
@@ -53,33 +55,44 @@ import java.util.*;
  * OR first modify the example by setting the field "useSparkLocal = false"
  *
  * @author Alex Black
- */
+ *//*
+
 public class SparkLSTMCharacterExample {
     private static final Logger log = LoggerFactory.getLogger(SparkLSTMCharacterExample.class);
 
-    /**
+    */
+/**
      * 根据字符串下标转换为字符串
-     */
+     *//*
+
     private static Map<Integer, Character> INT_TO_CHAR = getIntToChar();
 
-    /**
+    */
+/**
      * 根据字符串转换为对应的下标。
-     */
+     *//*
+
     private static Map<Character, Integer> CHAR_TO_INT = getCharToInt();
 
-    /**
+    */
+/**
      *  下标词汇表的大小
-     */
+     *//*
+
     private static final int N_CHARS = INT_TO_CHAR.size();
 
-    /**
+    */
+/**
      * 字符串词汇表的大小
-     */
+     *//*
+
     private static int nOut = CHAR_TO_INT.size();
 
-    /**
+    */
+/**
      * 切割字符串的长度
-     */
+     *//*
+
     private static int exampleLength = 1000;                    //Length of each training example sequence to use
 
     @Parameter(names = "-useSparkLocal", description = "Use spark local (helper for testing/running without spark submit)", arity = 1)
@@ -91,23 +104,27 @@ public class SparkLSTMCharacterExample {
     @Parameter(names = "-numEpochs", description = "Number of epochs for training")
     private int numEpochs = 1;
 
-    /**
+    */
+/**
      * 类中 main  方法
      *
      * @param args
      * @throws Exception
-     */
+     *//*
+
     public static void main(String[] args) throws Exception {
         // 调用方法入口
         new SparkLSTMCharacterExample().entryPoint(args);
     }
 
-    /**
+    */
+/**
      *  程序调用的接口
      *
      * @param args
      * @throws Exception
-     */
+     *//*
+
     protected void entryPoint(String[] args) throws Exception {
         //Handle command line arguments  JCommander： 用来处理解析命令行参数的的Java框架
         JCommander jcmdr = new JCommander(this);
@@ -158,9 +175,11 @@ public class SparkLSTMCharacterExample {
 
         //-------------------------------------------------------------
         //Set up the Spark-specific configuration
-        /* How frequently should we average parameters (in number of minibatches)?
+        */
+/* How frequently should we average parameters (in number of minibatches)?
         Averaging too frequently can be slow (synchronization + serialization costs) whereas too infrequently can result
-        learning difficulties (i.e., network may not converge) */
+        learning difficulties (i.e., network may not converge) *//*
+
 
         //参数平均化的频率，3批平均一次
         int averagingFrequency = 3;
@@ -212,13 +231,15 @@ public class SparkLSTMCharacterExample {
     }
 
 
-    /**
+    */
+/**
      * 获取训练数据集
      *
      * @param sc JavaSparkContext sc
      * @return
      * @throws IOException
-     */
+     *//*
+
     public static JavaRDD<DataSet> getTrainingData(JavaSparkContext sc) throws IOException {
         //Get data. For the sake of this example, we are doing the following operations:
         // File -> String -> List<String> (split into length "sequenceLength" characters) -> JavaRDD<String> -> JavaRDD<DataSet>
@@ -232,19 +253,25 @@ public class SparkLSTMCharacterExample {
         return rawStrings.map(new StringToDataSetFn(bcCharToInt));
     }
 
-    /**
+    */
+/**
      * 内部类
-     */
+     *//*
+
     private static class StringToDataSetFn implements Function<String, DataSet> {
-        /**
+        */
+/**
          * 获取得到的广播变量 （CHAR_TO_INT）根据字符串找到对应的下标。
-         */
+         *//*
+
         private final Broadcast<Map<Character, Integer>> ctiBroadcast;
 
-        /**
+        */
+/**
          * 构造器，初始化广播变量
          * @param characterIntegerMap
-         */
+         *//*
+
         private StringToDataSetFn(Broadcast<Map<Character, Integer>> characterIntegerMap) {
             this.ctiBroadcast = characterIntegerMap;
         }
@@ -277,13 +304,15 @@ public class SparkLSTMCharacterExample {
 
     //This function downloads (if necessary), loads and splits the raw text data into "sequenceLength" strings
 
-    /**
+    */
+/**
      * 获取每个长度为1000的字符串list
      *
      * @param sequenceLength 设置字符串list的长度
      * @return
      * @throws IOException
-     */
+     *//*
+
     private static List<String> getShakespeareAsList(int sequenceLength) throws IOException {
         //The Complete Works of William Shakespeare
         //5.3MB file in UTF-8 Encoding, ~5.4 million characters
@@ -317,17 +346,21 @@ public class SparkLSTMCharacterExample {
         return list;
     }
 
-    /**
+    */
+/**
      * Load data from a file, and remove any invalid characters.
      * Data is returned as a single large String
-     */
-    /**
+     *//*
+
+    */
+/**
      * 根据给定的地址获取全部的数据
      *
      * @param filePath 给定文件的路径
      * @return
      * @throws IOException
-     */
+     *//*
+
     private static String getDataAsString(String filePath) throws IOException {
         // 读取指定路径下的所有文件内容
         List<String> lines = FileUtils.readLines(new File(filePath), Charset.forName("UTF-8"));
@@ -345,7 +378,8 @@ public class SparkLSTMCharacterExample {
         return sb.toString();
     }
 
-    /**
+    */
+/**
      * Generate a sample from the network, given an (optional, possibly null) initialization. Initialization
      * can be used to 'prime' the RNN with a sequence you want to extend/continue.<br>
      * Note that the initalization is used for all samples
@@ -353,7 +387,8 @@ public class SparkLSTMCharacterExample {
      * @param initialization     String, may be null. If null, select a random character as initialization for all samples
      * @param charactersToSample Number of characters to sample from network (excluding initialization)
      * @param net                MultiLayerNetwork with one or more GravesLSTM/RNN layers and a softmax output layer
-     */
+     *//*
+
     private static String[] sampleCharactersFromNetwork(String initialization, MultiLayerNetwork net, Random rng,
                                                         Map<Integer, Character> intToChar, int charactersToSample, int numSamples) {
         //Set up initialization. If no initialization: use a random character
@@ -403,12 +438,14 @@ public class SparkLSTMCharacterExample {
         return out;
     }
 
-    /**
+    */
+/**
      * Given a probability distribution over discrete classes, sample from the distribution
      * and return the generated class index.
      *
      * @param distribution Probability distribution over classes. Must sum to 1.0
-     */
+     *//*
+
     private static int sampleFromDistribution(double[] distribution, Random rng) {
         double d = rng.nextDouble();
         double sum = 0.0;
@@ -420,14 +457,18 @@ public class SparkLSTMCharacterExample {
         throw new IllegalArgumentException("Distribution is invalid? d=" + d + ", sum=" + sum);
     }
 
-    /**
+    */
+/**
      * A minimal character set, with a-z, A-Z, 0-9 and common punctuation etc
-     */
-    /**
+     *//*
+
+    */
+/**
      * 获取英文字符串数组
      *
      * @return
-     */
+     *//*
+
     private static char[] getValidCharacters() {
         List<Character> validChars = new LinkedList<Character>();
         for (char c = 'a'; c <= 'z'; c++) validChars.add(c);
@@ -442,11 +483,13 @@ public class SparkLSTMCharacterExample {
         return out;
     }
 
-    /**
+    */
+/**
      * 根据下标int 转换为 char
      *
      * @return
-     */
+     *//*
+
     public static Map<Integer, Character> getIntToChar() {
         Map<Integer, Character> map = new HashMap<Integer, Character>();
         char[] chars = getValidCharacters();
@@ -456,11 +499,13 @@ public class SparkLSTMCharacterExample {
         return map;
     }
 
-    /**
+    */
+/**
      * 将字符串转换为int
      *
      * @return
-     */
+     *//*
+
     public static Map<Character, Integer> getCharToInt() {
         Map<Character, Integer> map = new HashMap<Character, Integer>();
         // 获取英文的字符串
@@ -472,3 +517,4 @@ public class SparkLSTMCharacterExample {
         return map;
     }
 }
+*/
