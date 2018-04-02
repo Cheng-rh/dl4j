@@ -47,5 +47,4 @@ public class TestLstm2 implements Serializable {
     }
 
 
-
 }

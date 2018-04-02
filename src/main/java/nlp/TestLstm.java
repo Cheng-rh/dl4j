@@ -104,7 +104,6 @@ public class TestLstm implements Serializable {
                 return label;
             }
         });
-        labelRdd.count();
         return labelRdd;
     }
 
@@ -250,13 +249,11 @@ public class TestLstm implements Serializable {
         JavaRDD<Tuple2<String, String>> data = testLstm.readFile(path).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
         JavaRDD<String> label = testLstm.readLabel(data);
         JavaRDD<String> text = testLstm.readText(data);
-        data.unpersist();
         JavaRDD<List<VocabWord>> labelList = testLstm.pipeLine(label);
         JavaRDD<List<VocabWord>> textList = testLstm.pipeLine(text);
         testLstm.findMaxlength(textList);
         JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine = testLstm.combine(labelList, textList);
         JavaRDD<DataSet> trainData = testLstm.chang2DataSet(combine).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
-        combine.unpersist();
         try {
             testLstm.modelTrain(trainData, savePath);
         } catch (Exception e) {
