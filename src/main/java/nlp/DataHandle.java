@@ -358,7 +358,12 @@ public class DataHandle {
      * @param path  label 文件的保存路径
      */
     public static HashMap<Double,String> readPipeLine(String path) {
-        FileUtils.readLines(new File(path))
+        HashMap<Double, String> map = new HashMap<Double, String>();
+        try {
+            List<String> lines = FileUtils.readLines(new File(path));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
     }
 
