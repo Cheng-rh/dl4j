@@ -201,7 +201,7 @@ public class DataHandle {
             if (fileName.equals("pipText")) {
                 fileWriter = new FileWriter(basePath + "\\src\\main\\resources\\lstm\\pipText.txt");
             } else if (fileName.equals("pipLabel")) {
-                fileWriter = new FileWriter(basePath + "\\src\\main\\resources\\lstm\\pipText.txt");
+                fileWriter = new FileWriter(basePath + "\\src\\main\\resources\\lstm\\pipLabel.txt");
             }
 
             JSONArray objects = new JSONArray();
@@ -317,7 +317,7 @@ public class DataHandle {
     public static INDArray str2INDArray(ArrayList<String> list) {
         ArrayList<JSONArray> allLines = new ArrayList<JSONArray>();
         try {
-            List<String> lines = FileUtils.readLines(new File(basePath + "\\src\\main\\resources\\lstm\\pipeLine.txt"));
+            List<String> lines = FileUtils.readLines(new File(basePath + "\\src\\main\\resources\\lstm\\pipText.txt"));
             for (String line : lines) {
                 JSONArray jsonArray = (JSONArray) JSON.parse(line);
                 allLines.add(jsonArray);
@@ -361,10 +361,17 @@ public class DataHandle {
         HashMap<Double, String> map = new HashMap<Double, String>();
         try {
             List<String> lines = FileUtils.readLines(new File(path));
+            for (String line : lines) {
+                JSONArray jsonArray = (JSONArray) JSON.parse(line);
+                for (Object o : jsonArray) {
+                    JSONObject jsonObject = (JSONObject) JSON.parse(o.toString());
+                    map.put(jsonObject.getDouble("index"), jsonObject.getString("word"));
+                }
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }
-
+        return map;
     }
 
 }

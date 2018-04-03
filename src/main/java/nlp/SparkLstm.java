@@ -29,6 +29,7 @@ import org.nd4j.linalg.lossfunctions.LossFunctions;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -155,6 +156,7 @@ public class SparkLstm {
         // 文本数据预处理
         DataHandle dataHandle = new DataHandle(jsc, basePath);
         INDArray testArray = dataHandle.str2INDArray(list);
+        HashMap<Double, String> labelMap = dataHandle.readPipeLine(basePath + "\\src\\main\\resources\\lstm\\pipLabel.txt");
 
         // 加载模型并预测
         MultiLayerNetwork net = ModelSerializer.restoreMultiLayerNetwork(basePath + "\\src\\main\\resources\\lstm\\lstm-model.zip");
