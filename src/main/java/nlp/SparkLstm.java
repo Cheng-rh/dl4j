@@ -1,27 +1,13 @@
 package nlp;
 
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
 import com.huaban.analysis.jieba.JiebaSegmenter;
 import com.huaban.analysis.jieba.SegToken;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.hadoop.fs.FSDataOutputStream;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.api.java.function.Function;
-import org.apache.spark.broadcast.Broadcast;
-import org.apache.spark.mllib.linalg.Vector;
-import org.apache.spark.mllib.linalg.Vectors;
-import org.apache.spark.storage.StorageLevel;
 import org.deeplearning4j.eval.Evaluation;
-import org.deeplearning4j.models.embeddings.loader.VectorsConfiguration;
-import org.deeplearning4j.models.word2vec.VocabWord;
+import org.deeplearning4j.nn.api.Layer;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
@@ -35,21 +21,15 @@ import org.deeplearning4j.optimize.api.IterationListener;
 import org.deeplearning4j.optimize.listeners.ScoreIterationListener;
 import org.deeplearning4j.spark.impl.multilayer.SparkDl4jMultiLayer;
 import org.deeplearning4j.spark.impl.paramavg.ParameterAveragingTrainingMaster;
-import org.deeplearning4j.spark.text.functions.TextPipeline;
-import org.deeplearning4j.text.tokenization.tokenizer.preprocessor.CommonPreprocessor;
-import org.deeplearning4j.text.tokenization.tokenizerfactory.DefaultTokenizerFactory;
 import org.deeplearning4j.util.ModelSerializer;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.dataset.DataSet;
-import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
-import scala.Tuple2;
-
 import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -62,34 +42,55 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class SparkLstm {
 
-    private static Integer maxlength = 0;
+    /**
+     * 文本转换词汇表的维度
+     */
+    private static Integer maxlength = 663;
 
-    private static Broadcast<Map<String, Object>> broadcasTokenizerVarMap;
-
-    private static Integer numLabel = 2;
-
-    private static AtomicInteger lineNum = new AtomicInteger(0);
-
+    /**
+     * 词汇表的长度
+     */
     private static AtomicInteger VOCAB_SIZE = new AtomicInteger(0);
 
+    /**
+     * JavaSparkContext
+     */
     private static JavaSparkContext jsc;
 
+    /**
+     * 文件基本路径
+     */
+    private static String basePath = System.getProperty("user.dir");
 
-    public void modelTrain(String[] args) throws Exception {
+    /**
+     * 模型训练批大小
+     */
+    private static Integer batchSize = 36;
 
+    static {
         SparkConf sparkConf = new SparkConf();
         sparkConf.setMaster("local[*]").setAppName("deeplearning4j-lstm");
         jsc = new JavaSparkContext(sparkConf);
+    }
 
-        String inputPath = "file:///C:/Users/sssd/Desktop/LSTM/data.txt";
-        String savePath = "file:///C:/Users/sssd/Desktop/LSTM/model.txt";
-        JavaRDD<DataSet> dataSet = getDataSet(jsc, inputPath);
+    /**
+     * 模型训练
+     *
+     * @param args
+     * @throws Exception
+     */
+    public void modelTrain(String[] args) throws Exception {
+
+        // 获取训练集和测试集
+        DataHandle dataHandle = new DataHandle(jsc, basePath);
+        JavaRDD<DataSet> dataSet = dataHandle.getDataSet();
+        this.VOCAB_SIZE = dataHandle.VOCAB_SIZE;
+        this.maxlength = dataHandle.maxlength;
         JavaRDD<DataSet>[] javaRDDS = dataSet.randomSplit(new double[]{0.7, 0.3}, 11l);
         JavaRDD<DataSet> trainData = javaRDDS[0];
         JavaRDD<DataSet> testData = javaRDDS[1];
 
         // lstm 的初始化参数
-        Integer batchSize = 36;
         Integer totalEpoch = 10;
         Integer lstmLayerSize = 256;
         Integer nOut = 2;
@@ -120,197 +121,29 @@ public class SparkLstm {
                 .batchSizePerWorker(batchSize)
                 .build();
 
+        //lstm 模型训练
         SparkDl4jMultiLayer sparknet = new SparkDl4jMultiLayer(jsc, netconf, trainMaster);
         sparknet.setListeners(Collections.<IterationListener>singletonList(new ScoreIterationListener(1)));
-
         for (int numEpoch = 0; numEpoch < totalEpoch; numEpoch++) {
             sparknet.fit(trainData);
         }
 
+        // lstm 模型验证
         Evaluation evaluation = sparknet.evaluate(testData);
         double accuracy = evaluation.accuracy();
         System.out.println("====================================================================");
         System.out.println("Accuracy: " + accuracy);
         System.out.println("====================================================================");
 
+        // lstm 保存训练模型
         MultiLayerNetwork network = sparknet.getNetwork();
-        FileSystem fileSystem = FileSystem.get(jsc.hadoopConfiguration());
-        Path path = new Path(savePath);
-        if (fileSystem.exists(path)) {
-            fileSystem.delete(path, true);
-        }
-        FSDataOutputStream outputStream = fileSystem.create(path);
-        ModelSerializer.writeModel(network, outputStream, true);
-
+        ModelSerializer.writeModel(network, new File(basePath + "/src/main/resources/lstm/lstm-model.zip"), true);
     }
 
 
-    public static JavaRDD<DataSet> getDataSet(JavaSparkContext jsc, String inputPath) {
-        JavaRDD<Tuple2<String, String>> sourceData = readFile(jsc, inputPath).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
-        JavaRDD<String> label = readLabel(sourceData);
-        JavaRDD<String> text = readText(sourceData);
-        initTokenizer(jsc);
-        JavaRDD<List<VocabWord>> labelList = pipeLine(label);
-        JavaRDD<List<VocabWord>> textList = pipeLine(text);
-        savaPipeLine(textList);
-        findMaxlength(textList);
-        JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine = combine(labelList, textList);
-        JavaRDD<DataSet> data = chang2DataSet(combine).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
-        sourceData.unpersist();
-        return data;
-    }
+    public void modelPre(String str) throws Exception {
 
-    public static void savaPipeLine(JavaRDD<List<VocabWord>> textList) {
-        List<List<VocabWord>> collect = textList.collect();
-        StringBuffer bf = new StringBuffer();
-        FileWriter fileWriter = null;
-        try {
-            fileWriter = new FileWriter("C:\\Users\\hui\\Desktop\\pipeLine.txt");
-            JSONArray objects = new JSONArray();
-            for (List<VocabWord> list : collect) {
-                for (VocabWord vocabWord : list) {
-                    objects.add(vocabWord.toJSON());
-                }
-                bf.append(objects.toString()).append("\n");
-            }
-            bf.deleteCharAt(bf.length() - 1);
-            fileWriter.write(bf.toString());
-            fileWriter.flush();
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            try {
-                fileWriter.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
-
-    public static JavaRDD<Tuple2<String, String>> readFile(JavaSparkContext jsc, String path) {
-        JavaRDD<String> javaRDD = jsc.textFile(path);
-        JavaRDD<Tuple2<String, String>> rdd = javaRDD.map(new Function<String, Tuple2<String, String>>() {
-            public Tuple2<String, String> call(String s) throws Exception {
-                String[] split = s.split("\t");
-                Tuple2<String, String> tuple2 = new Tuple2<String, String>(split[0], split[1]);
-                return tuple2;
-            }
-        });
-        return rdd;
-    }
-
-    public static JavaRDD<String> readLabel(JavaRDD<Tuple2<String, String>> data) {
-        JavaRDD<String> labelRdd = data.map(new Function<Tuple2<String, String>, String>() {
-            public String call(Tuple2<String, String> stringStringTuple2) throws Exception {
-                String label = stringStringTuple2._1;
-                return label;
-            }
-        });
-        return labelRdd;
-    }
-
-    public static JavaRDD<String> readText(JavaRDD<Tuple2<String, String>> data) {
-        JavaRDD<String> textRdd = data.map(new Function<Tuple2<String, String>, String>() {
-            public String call(Tuple2<String, String> stringStringTuple2) throws Exception {
-                String text = stringStringTuple2._2;
-                return text;
-            }
-        });
-        return textRdd;
-    }
-
-    public static void initTokenizer(JavaSparkContext jsc) {
-        Map<String, Object> TokenizerVarMap = new HashMap<String, Object>();
-        TokenizerVarMap.put("numWords", 1);     //min count of word appearence
-        TokenizerVarMap.put("nGrams", 1);       //language model parameter
-        TokenizerVarMap.put("tokenizer", DefaultTokenizerFactory.class.getName());  //tokenizer implemention
-        TokenizerVarMap.put("tokenPreprocessor", CommonPreprocessor.class.getName());
-        TokenizerVarMap.put("useUnk", true);    //unlisted words will use usrUnk
-        TokenizerVarMap.put("vectorsConfiguration", new VectorsConfiguration());
-        TokenizerVarMap.put("stopWords", new ArrayList<String>());  //stop words
-        broadcasTokenizerVarMap = jsc.broadcast(TokenizerVarMap);
-    }
-
-    public static JavaRDD<List<VocabWord>> pipeLine(JavaRDD<String> javaRDDText) {
-        JavaRDD<List<VocabWord>> textVocab = null;
-        try {
-            TextPipeline pipeline = new TextPipeline(javaRDDText, broadcasTokenizerVarMap);
-            pipeline.buildVocabCache();
-            pipeline.buildVocabWordListRDD();
-            textVocab = pipeline.getVocabWordListRDD();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return textVocab;
-    }
-
-    public static JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine(JavaRDD<List<VocabWord>> label, JavaRDD<List<VocabWord>> text) {
-        final List<List<VocabWord>> labels = label.collect();
-        JavaRDD<Tuple2<List<VocabWord>, VocabWord>> res = text.map(new Function<List<VocabWord>, Tuple2<List<VocabWord>, VocabWord>>() {
-            public Tuple2<List<VocabWord>, VocabWord> call(List<VocabWord> vocabWords) throws Exception {
-                int num = lineNum.getAndIncrement();
-                VocabWord labelVocabWord = labels.get(num).get(0);
-                Tuple2<List<VocabWord>, VocabWord> tuple2 = new Tuple2<List<VocabWord>, VocabWord>(vocabWords, labelVocabWord);
-                if (lineNum.equals(labels.size() - 1)) {
-                    lineNum = new AtomicInteger(0);
-                }
-                return tuple2;
-            }
-        });
-        return res;
-    }
-
-    public static void findMaxlength(JavaRDD<List<VocabWord>> textList) {
-        JavaRDD<Integer> map = textList.map(new Function<List<VocabWord>, Integer>() {
-            public Integer call(List<VocabWord> vocabWords) throws Exception {
-                int size = vocabWords.size();
-                VOCAB_SIZE.addAndGet(size);
-                if (maxlength < size) {
-                    maxlength = size;
-                }
-                return size;
-            }
-        });
-        map.count();
-        System.out.println("词表的长度为：" + VOCAB_SIZE);
-        System.out.println("预料的最大维度为：" + maxlength);
-    }
-
-    public static JavaRDD<DataSet> chang2DataSet(JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine) {
-        JavaRDD<DataSet> res = combine.map(new Function<Tuple2<List<VocabWord>, VocabWord>, DataSet>() {
-            public DataSet call(Tuple2<List<VocabWord>, VocabWord> tuple) throws Exception {
-                List<VocabWord> wordList = tuple._1;
-                VocabWord labelList = tuple._2;
-                INDArray features = Nd4j.create(1, 1, maxlength);
-                INDArray labels = Nd4j.create(1, numLabel, maxlength);
-                INDArray featureMask = Nd4j.zeros(1, maxlength);
-                INDArray labelMask = Nd4j.zeros(1, maxlength);
-                int[] origin = new int[3];
-                int[] mask = new int[2];
-                origin[0] = 0;
-                mask[0] = 0;
-                int j = 0;
-                for (VocabWord vocabWord : wordList) {
-                    origin[2] = j;
-                    features.putScalar(origin, vocabWord.getIndex());
-                    mask[1] = j;
-                    featureMask.putScalar(mask, 1.0);
-                    ++j;
-                }
-                int lastIndex = wordList.size();
-                int index = labelList.getIndex();
-                labels.putScalar(new int[]{0, index, lastIndex - 1}, 1.0);
-                labelMask.putScalar(new int[]{0, lastIndex - 1}, 1.0);
-                return new DataSet(features, labels, featureMask, labelMask);
-            }
-        });
-        return res;
-    }
-
-
-    public void modelPre(String str) {
-
+        // 文本分词
         JiebaSegmenter segmenter = new JiebaSegmenter();
         List<SegToken> tokens = segmenter.process(str, JiebaSegmenter.SegMode.INDEX);
         ArrayList<String> list = new ArrayList<String>();
@@ -318,44 +151,30 @@ public class SparkLstm {
             String word = token.word;
             list.add(word);
         }
-    }
 
-    public void str2Vecctor(ArrayList<String> list) {
-        ArrayList<JSONArray> allLines = new ArrayList<JSONArray>();
-        try {
-            List<String> lines = FileUtils.readLines(new File("C:\\Users\\hui\\Desktop\\pipeLine.txt"));
-            for (String line : lines) {
-                JSONArray jsonArray = (JSONArray) JSON.parse(line);
-                allLines.add(jsonArray);
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        double[] doubles = new double[list.size()];
-        for (int i = 0; i < list.size(); i++) {
-            String tempStr = list.get(i);
-            for (JSONArray line : allLines) {
-                for (Object o : line) {
-                    JSONObject jsonObject = (JSONObject) o;
-                    if (jsonObject.getString("word").equals(tempStr)){
-                        doubles[i] = Double.parseDouble(jsonObject.getString("index"));
-                        break;
-                    }
-                }
-                if (StringUtils.isNoneBlank(String.valueOf(doubles[i]))){
-                    break;
-                }
-            }
+        // 文本数据预处理
+        DataHandle dataHandle = new DataHandle(jsc, basePath);
+        INDArray testArray = dataHandle.str2INDArray(list);
 
+        // 加载模型并预测
+        MultiLayerNetwork net = ModelSerializer.restoreMultiLayerNetwork(basePath + "\\src\\main\\resources\\lstm\\lstm-model.zip");
+        INDArray output = net.output(testArray, Layer.TrainingMode.TEST);
+        INDArray row = output.getRow(0).getRow(0);
+        INDArray mean = row.mean(1);
+        double res = mean.getDouble(0);
+        if (res > 0.5) {
+            System.out.println("文本是正面的");
+        } else {
+            System.out.println("文本是负面的");
         }
-        Vectors.dense(doubles);
     }
 
 
     public static void main(String[] args) throws Exception {
         new SparkLstm().modelTrain(args);
-        String str = "这个产品很好！";
-        new SparkLstm().modelPre(str);
+        String str = "老者还知道你很好奇，知道你有疑问，他还允许你提问，然后会用他会用他渊博的见识，耐心地为你分析，合情合理合情合理，还不乱结论下结论，好像在和你互动。";
+        String str1 = "蒙牛牛你果然是个傻逼ps:你不冷啊还短裤咯";
+//        new SparkLstm().modelPre(str1);
     }
 
 }

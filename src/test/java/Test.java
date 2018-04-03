@@ -1,3 +1,6 @@
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
 import com.huaban.analysis.jieba.JiebaSegmenter;
 import com.huaban.analysis.jieba.SegToken;
 import org.apache.commons.io.FileUtils;
@@ -16,6 +19,8 @@ import org.nd4j.linalg.factory.Nd4j;
 
 import java.io.File;
 import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -100,14 +105,90 @@ public class Test {
         pipeline.buildVocabWordListRDD();
         JavaRDD<List<VocabWord>> res = pipeline.getVocabWordListRDD();
 
+        savaPipeLine(res);
 
-        List<List<VocabWord>> collect = res.collect();
+/*        List<List<VocabWord>> collect = res.collect();
         for (List<VocabWord> words : collect) {
             System.out.println(words.toString());
-        }
+        }*/
 
 
     }
+
+    public static void savaPipeLine(JavaRDD<List<VocabWord>> textList) {
+        List<List<VocabWord>> collect = textList.collect();
+        StringBuffer bf = new StringBuffer();
+        FileWriter fileWriter = null;
+        try {
+            fileWriter = new FileWriter("C:\\Users\\sssd\\Desktop\\pipeLine.txt");
+            JSONArray objects = new JSONArray();
+            for (List<VocabWord> list : collect) {
+                for (VocabWord vocabWord : list) {
+                    objects.add(vocabWord.toJSON());
+                }
+                bf.append(objects.toString()).append("\n");
+                System.out.println(bf.toString());
+                objects = new JSONArray();
+            }
+            bf.deleteCharAt(bf.length() - 1);
+            fileWriter.write(bf.toString());
+            fileWriter.flush();
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                fileWriter.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @org.junit.Test
+    public void readPipeLine(){
+        ArrayList<JSONArray> allLines = new ArrayList<JSONArray>();
+        try {
+            List<String> lines = FileUtils.readLines(new File("C:\\Users\\sssd\\Desktop\\pipeLine.txt"));
+            for (String line : lines) {
+                JSONArray jsonArray = (JSONArray) JSON.parse(line);
+                allLines.add(jsonArray);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        ArrayList<String> list = new ArrayList<String>();
+        list.add("我");
+        list.add("中国");
+
+        INDArray features = Nd4j.zeros(1, 1, 10);
+        int[] origin = new int[3];
+        origin[0] = 0;
+        int j = 0;
+        int sign = 0;
+        for (String tempStr : list) {
+            origin[2] = j;
+            for (JSONArray line : allLines) {
+                for (Object o : line) {
+                    System.out.println(o.toString());
+                    JSONObject jsonObject = (JSONObject)JSON.parse(o.toString());
+                    if (jsonObject.getString("word").equals(tempStr)) {
+                        features.putScalar(origin, jsonObject.getDouble("index"));
+                        sign = 1;
+                        break;
+                    }
+                }
+                if (sign == 1){
+                    sign = 0;
+                    break;
+                }
+            }
+            j++;
+        }
+
+        System.out.println(features.toString());
+    }
+
 
     @org.junit.Test
     public void modelPre() {
@@ -131,5 +212,7 @@ public class Test {
                 "VocabWord{wordFrequency=3.0, index=0, word='中国', codeLength=2}, " +
                 "VocabWord{wordFrequency=1.0, index=10, word='人。', codeLength=4}]";
     }
+
+
 
 }

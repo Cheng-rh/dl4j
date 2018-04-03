@@ -322,7 +322,7 @@ public class SparkLSTMCharacterExample {
         String fileLocation = tempDir + "/Shakespeare.txt";    //Storage location from downloaded file
         File f = new File(fileLocation);
         if (!f.exists()) {
-            FileUtils.copyURLToFile(new URL(url), f);
+            DataHandle.copyURLToFile(new URL(url), f);
             System.out.println("File downloaded to " + f.getAbsolutePath());
         } else {
             System.out.println("Using existing text file at " + f.getAbsolutePath());
@@ -363,7 +363,7 @@ public class SparkLSTMCharacterExample {
 
     private static String getDataAsString(String filePath) throws IOException {
         // 读取指定路径下的所有文件内容
-        List<String> lines = FileUtils.readLines(new File(filePath), Charset.forName("UTF-8"));
+        List<String> lines = DataHandle.readLines(new File(filePath), Charset.forName("UTF-8"));
         StringBuilder sb = new StringBuilder();
         for (String line : lines) {
             // 将内容转换为 chars 的数组
