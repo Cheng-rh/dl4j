@@ -162,11 +162,7 @@ public class SparkLstm {
         INDArray row = output.getRow(0).getRow(0);
         INDArray mean = row.mean(1);
         double res = mean.getDouble(0);
-        if (res > 0.5) {
-            System.out.println("文本是正面的");
-        } else {
-            System.out.println("文本是负面的");
-        }
+        System.out.println("");
     }
 
 

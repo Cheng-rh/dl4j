@@ -92,7 +92,8 @@ public class DataHandle {
         initTokenizer();
         JavaRDD<List<VocabWord>> labelList = pipeLine(label);
         JavaRDD<List<VocabWord>> textList = pipeLine(text);
-        savaPipeLine(textList);
+        savaPipeLine(textList, "pipText");
+        savaPipeLine(labelList, "pipLabel");
         findMaxlength(textList);
         JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine = combine(labelList, textList);
         JavaRDD<DataSet> data = chang2DataSet(combine).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
@@ -167,7 +168,7 @@ public class DataHandle {
     }
 
     /**
-     * 分别对文本和标签进行 pipeLine 处理
+     * pipeLine 处理
      *
      * @param javaRDDText 文本内容或标签
      * @return
@@ -189,14 +190,20 @@ public class DataHandle {
      * 将文本内容对应的pipeLine 参数进行保存
      *
      * @param textList 经过pipeLine 处理过的文本内容
+     * @param fileName 文本保存名字
      */
-    public static void savaPipeLine(JavaRDD<List<VocabWord>> textList) {
+    public static void savaPipeLine(JavaRDD<List<VocabWord>> textList, String fileName) {
         System.out.println("------------------ 开始保存bpeLine ----------------------");
         List<List<VocabWord>> collect = textList.collect();
         StringBuffer bf = new StringBuffer();
         FileWriter fileWriter = null;
         try {
-            fileWriter = new FileWriter(basePath + "\\src\\main\\resources\\lstm\\pipeLine.txt");
+            if (fileName.equals("pipText")) {
+                fileWriter = new FileWriter(basePath + "\\src\\main\\resources\\lstm\\pipText.txt");
+            } else if (fileName.equals("pipLabel")) {
+                fileWriter = new FileWriter(basePath + "\\src\\main\\resources\\lstm\\pipText.txt");
+            }
+
             JSONArray objects = new JSONArray();
             for (List<VocabWord> list : collect) {
                 for (VocabWord vocabWord : list) {
@@ -266,7 +273,7 @@ public class DataHandle {
     /**
      * 封装模型需要的数据格式
      *
-     * @param combine   将pipeLIne处理数据合并后的数据
+     * @param combine 将pipeLIne处理数据合并后的数据
      * @return
      */
     public static JavaRDD<DataSet> chang2DataSet(JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine) {
@@ -304,7 +311,7 @@ public class DataHandle {
     /**
      * 转换数据为指定格式
      *
-     * @param list  分此后的数据
+     * @param list 分此后的数据
      * @return
      */
     public static INDArray str2INDArray(ArrayList<String> list) {
@@ -343,6 +350,16 @@ public class DataHandle {
             j++;
         }
         return features;
+    }
+
+    /**
+     * 读取 pipeLine 文件
+     *
+     * @param path  label 文件的保存路径
+     */
+    public static HashMap<Double,String> readPipeLine(String path) {
+        FileUtils.readLines(new File(path))
+
     }
 
 }
