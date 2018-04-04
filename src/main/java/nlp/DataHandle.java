@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import org.apache.commons.io.FileUtils;
+import org.apache.spark.Accumulator;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.Function;
@@ -22,11 +23,11 @@ import scala.Tuple2;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Created with IntelliJ IDEA.
@@ -34,9 +35,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Date: 2018/4/3 16:31
  * Version: V1.0
  * To change this template use File | Settings | File Templates.
- * Description:      文本数据预处理
+ * Description:      文本数据处理
  */
-public class DataHandle {
+public class DataHandle implements Serializable {
 
     /**
      * JavaSparkContext
@@ -48,36 +49,48 @@ public class DataHandle {
      */
     public static String basePath;
 
-
     /**
      * pipeline 初始化参数
      */
     public static Broadcast<Map<String, Object>> broadcasTokenizerVarMap;
 
     /**
-     * 统计词汇表长度
+     * 统计词汇表的长度
      */
-    public static AtomicInteger VOCAB_SIZE = new AtomicInteger(0);
+    public static volatile Accumulator<Integer> VOCAB_SIZE;
 
     /**
-     * 文本特征维度
+     * 设置文本向量特征维度
      */
-    public static Integer maxlength = 663;
+    public static volatile Broadcast<Integer> maxlength;
 
     /**
-     * 记录文本行数
+     * 设置文本标签的维度
      */
-    public static AtomicInteger lineNum = new AtomicInteger(0);
+    public static volatile Broadcast<Integer> numLabel;
 
     /**
-     * 样本标签的维度
+     * 初始化文本标签种类
      */
-    public static Integer numLabel = 2;
+    public static volatile Broadcast<List<String>> LABEL;
 
 
     public DataHandle(JavaSparkContext jsc, String inputPath) {
+        // 初始化 jsc
         this.jsc = jsc;
+        // 初始化读取文件的基本路径
         this.basePath = inputPath;
+        // 统计词汇表的长度
+        this.VOCAB_SIZE = this.jsc.accumulator(0, "wordSize");
+        // 广播文本向量维度
+        maxlength = this.jsc.broadcast(663);
+        // 广播文本标签维度
+        numLabel = this.jsc.broadcast(2);
+        // 广播文本标签种类
+        List<String> type = new ArrayList<String>();
+        type.add("a");
+        type.add("b");
+        LABEL = this.jsc.broadcast(type);
     }
 
     /**
@@ -86,70 +99,12 @@ public class DataHandle {
      * @return
      */
     public static JavaRDD<DataSet> getDataSet() {
-        JavaRDD<Tuple2<String, String>> sourceData = readFile(jsc, basePath + "/src/main/resources/lstm/data.txt").persist(StorageLevel.MEMORY_AND_DISK_SER_2());
-        JavaRDD<String> label = readLabel(sourceData);
-        JavaRDD<String> text = readText(sourceData);
+        JavaRDD<String> javaRDD = jsc.textFile(basePath + "/src/main/resources/lstm/data.txt");
         initTokenizer();
-        JavaRDD<List<VocabWord>> labelList = pipeLine(label);
-        JavaRDD<List<VocabWord>> textList = pipeLine(text);
-        savaPipeLine(textList, "pipText");
-        savaPipeLine(labelList, "pipLabel");
-        findMaxlength(textList);
-        JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine = combine(labelList, textList);
-        JavaRDD<DataSet> data = chang2DataSet(combine).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
-        sourceData.unpersist();
+        JavaRDD<Tuple2<List<VocabWord>, Integer>> pipeLineData = pipeLine(javaRDD);
+        savaPipeLine(pipeLineData);
+        JavaRDD<DataSet> data = chang2DataSet(pipeLineData).persist(StorageLevel.MEMORY_AND_DISK_SER_2());
         return data;
-    }
-
-    /**
-     * 读取文本数据
-     *
-     * @param jsc  JavaSparkContext
-     * @param path 文本存放路径
-     * @return
-     */
-    public static JavaRDD<Tuple2<String, String>> readFile(JavaSparkContext jsc, String path) {
-        JavaRDD<String> javaRDD = jsc.textFile(path);
-        JavaRDD<Tuple2<String, String>> rdd = javaRDD.map(new Function<String, Tuple2<String, String>>() {
-            public Tuple2<String, String> call(String s) throws Exception {
-                String[] split = s.split("\t");
-                Tuple2<String, String> tuple2 = new Tuple2<String, String>(split[0], split[1]);
-                return tuple2;
-            }
-        });
-        return rdd;
-    }
-
-    /**
-     * 读取文本中的标签
-     *
-     * @param data javaRDD 文本数据
-     * @return
-     */
-    public static JavaRDD<String> readLabel(JavaRDD<Tuple2<String, String>> data) {
-        JavaRDD<String> labelRdd = data.map(new Function<Tuple2<String, String>, String>() {
-            public String call(Tuple2<String, String> stringStringTuple2) throws Exception {
-                String label = stringStringTuple2._1;
-                return label;
-            }
-        });
-        return labelRdd;
-    }
-
-    /**
-     * 读取文本中的文本内容
-     *
-     * @param data JavaRDD文本数据
-     * @return
-     */
-    public static JavaRDD<String> readText(JavaRDD<Tuple2<String, String>> data) {
-        JavaRDD<String> textRdd = data.map(new Function<Tuple2<String, String>, String>() {
-            public String call(Tuple2<String, String> stringStringTuple2) throws Exception {
-                String text = stringStringTuple2._2;
-                return text;
-            }
-        });
-        return textRdd;
     }
 
     /**
@@ -173,39 +128,44 @@ public class DataHandle {
      * @param javaRDDText 文本内容或标签
      * @return
      */
-    public static JavaRDD<List<VocabWord>> pipeLine(JavaRDD<String> javaRDDText) {
-        JavaRDD<List<VocabWord>> textVocab = null;
+    public static JavaRDD<Tuple2<List<VocabWord>, Integer>> pipeLine(JavaRDD<String> javaRDDText) {
+        JavaRDD<Tuple2<List<VocabWord>, Integer>> resMap = null;
         try {
             TextPipeline pipeline = new TextPipeline(javaRDDText, broadcasTokenizerVarMap);
             pipeline.buildVocabCache();
             pipeline.buildVocabWordListRDD();
-            textVocab = pipeline.getVocabWordListRDD();
+            JavaRDD<List<VocabWord>> wordListRDD = pipeline.getVocabWordListRDD();
+            resMap = wordListRDD.map(new Function<List<VocabWord>, Tuple2<List<VocabWord>, Integer>>() {
+                public Tuple2<List<VocabWord>, Integer> call(List<VocabWord> vocabWords) throws Exception {
+                    VOCAB_SIZE.add(vocabWords.size() - 1);
+                    Tuple2<List<VocabWord>, Integer> tuple2 = new Tuple2<List<VocabWord>, Integer>(
+                            new ArrayList<VocabWord>(vocabWords.subList(1, vocabWords.size())),
+                            LABEL.getValue().indexOf(vocabWords.get(0).getWord()));
+                    return tuple2;
+                }
+            });
         } catch (Exception e) {
             e.printStackTrace();
         }
-        return textVocab;
+        return resMap;
     }
 
     /**
      * 将文本内容对应的pipeLine 参数进行保存
      *
      * @param textList 经过pipeLine 处理过的文本内容
-     * @param fileName 文本保存名字
      */
-    public static void savaPipeLine(JavaRDD<List<VocabWord>> textList, String fileName) {
+    public static void savaPipeLine(JavaRDD<Tuple2<List<VocabWord>, Integer>> textList) {
         System.out.println("------------------ 开始保存bpeLine ----------------------");
-        List<List<VocabWord>> collect = textList.collect();
+        List<Tuple2<List<VocabWord>, Integer>> collect = textList.collect();
         StringBuffer bf = new StringBuffer();
         FileWriter fileWriter = null;
-        try {
-            if (fileName.equals("pipText")) {
-                fileWriter = new FileWriter(basePath + "\\src\\main\\resources\\lstm\\pipText.txt");
-            } else if (fileName.equals("pipLabel")) {
-                fileWriter = new FileWriter(basePath + "\\src\\main\\resources\\lstm\\pipLabel.txt");
-            }
 
+        try {
+            fileWriter = new FileWriter(basePath + "\\src\\main\\resources\\lstm\\pipText.txt");
             JSONArray objects = new JSONArray();
-            for (List<VocabWord> list : collect) {
+            for (Tuple2<List<VocabWord>, Integer> tuple2 : collect) {
+                List<VocabWord> list = tuple2._1;
                 for (VocabWord vocabWord : list) {
                     objects.add(vocabWord.toJSON());
                 }
@@ -226,49 +186,6 @@ public class DataHandle {
         }
     }
 
-    /**
-     * 统计文本特征最大维度和 文本词汇表长度
-     *
-     * @param textList
-     */
-    public static void findMaxlength(JavaRDD<List<VocabWord>> textList) {
-        JavaRDD<Integer> map = textList.map(new Function<List<VocabWord>, Integer>() {
-            public Integer call(List<VocabWord> vocabWords) throws Exception {
-                int size = vocabWords.size();
-                VOCAB_SIZE.addAndGet(size);
-                if (maxlength < size) {
-                    maxlength = size;
-                }
-                return size;
-            }
-        });
-        map.count();
-        System.out.println("词表的长度为：" + VOCAB_SIZE);
-        System.out.println("预料的最大维度为：" + maxlength);
-    }
-
-    /**
-     * 将pipeLine 处理过的文本内容和文本标签进行合并
-     *
-     * @param label pipeLine 处理过的文本标签
-     * @param text  pipeLine 处理过的文本内容
-     * @return
-     */
-    public static JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine(JavaRDD<List<VocabWord>> label, JavaRDD<List<VocabWord>> text) {
-        final List<List<VocabWord>> labels = label.collect();
-        JavaRDD<Tuple2<List<VocabWord>, VocabWord>> res = text.map(new Function<List<VocabWord>, Tuple2<List<VocabWord>, VocabWord>>() {
-            public Tuple2<List<VocabWord>, VocabWord> call(List<VocabWord> vocabWords) throws Exception {
-                int num = lineNum.getAndIncrement();
-                VocabWord labelVocabWord = labels.get(num).get(0);
-                Tuple2<List<VocabWord>, VocabWord> tuple2 = new Tuple2<List<VocabWord>, VocabWord>(vocabWords, labelVocabWord);
-                if (lineNum.equals(labels.size() - 1)) {
-                    lineNum = new AtomicInteger(0);
-                }
-                return tuple2;
-            }
-        });
-        return res;
-    }
 
     /**
      * 封装模型需要的数据格式
@@ -276,15 +193,14 @@ public class DataHandle {
      * @param combine 将pipeLIne处理数据合并后的数据
      * @return
      */
-    public static JavaRDD<DataSet> chang2DataSet(JavaRDD<Tuple2<List<VocabWord>, VocabWord>> combine) {
-        JavaRDD<DataSet> res = combine.map(new Function<Tuple2<List<VocabWord>, VocabWord>, DataSet>() {
-            public DataSet call(Tuple2<List<VocabWord>, VocabWord> tuple) throws Exception {
+    public static JavaRDD<DataSet> chang2DataSet(JavaRDD<Tuple2<List<VocabWord>, Integer>> combine) {
+        JavaRDD<DataSet> res = combine.map(new Function<Tuple2<List<VocabWord>, Integer>, DataSet>() {
+            public DataSet call(Tuple2<List<VocabWord>, Integer> tuple) throws Exception {
                 List<VocabWord> wordList = tuple._1;
-                VocabWord labelList = tuple._2;
-                INDArray features = Nd4j.create(1, 1, maxlength);
-                INDArray labels = Nd4j.create(1, numLabel, maxlength);
-                INDArray featureMask = Nd4j.zeros(1, maxlength);
-                INDArray labelMask = Nd4j.zeros(1, maxlength);
+                INDArray features = Nd4j.create(1, 1, maxlength.getValue());
+                INDArray labels = Nd4j.create(1, numLabel.getValue(), maxlength.getValue());
+                INDArray featureMask = Nd4j.zeros(1, maxlength.getValue());
+                INDArray labelMask = Nd4j.zeros(1, maxlength.getValue());
                 int[] origin = new int[3];
                 int[] mask = new int[2];
                 origin[0] = 0;
@@ -298,7 +214,7 @@ public class DataHandle {
                     ++j;
                 }
                 int lastIndex = wordList.size();
-                int index = labelList.getIndex();
+                int index = tuple._2;
                 labels.putScalar(new int[]{0, index, lastIndex - 1}, 1.0);
                 labelMask.putScalar(new int[]{0, lastIndex - 1}, 1.0);
                 return new DataSet(features, labels, featureMask, labelMask);
@@ -326,7 +242,7 @@ public class DataHandle {
             e.printStackTrace();
         }
 
-        INDArray features = Nd4j.zeros(1, 1, maxlength);
+        INDArray features = Nd4j.zeros(1, 1, 663);
         int[] origin = new int[3];
         origin[0] = 0;
         int j = 0;
@@ -351,27 +267,4 @@ public class DataHandle {
         }
         return features;
     }
-
-    /**
-     * 读取 pipeLine 文件
-     *
-     * @param path  label 文件的保存路径
-     */
-    public static HashMap<Double,String> readPipeLine(String path) {
-        HashMap<Double, String> map = new HashMap<Double, String>();
-        try {
-            List<String> lines = FileUtils.readLines(new File(path));
-            for (String line : lines) {
-                JSONArray jsonArray = (JSONArray) JSON.parse(line);
-                for (Object o : jsonArray) {
-                    JSONObject jsonObject = (JSONObject) JSON.parse(o.toString());
-                    map.put(jsonObject.getDouble("index"), jsonObject.getString("word"));
-                }
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return map;
-    }
-
 }

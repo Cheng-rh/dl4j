@@ -3,10 +3,13 @@ package nlp;
 
 import com.huaban.analysis.jieba.JiebaSegmenter;
 import com.huaban.analysis.jieba.SegToken;
+import org.apache.spark.Accumulator;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.broadcast.Broadcast;
 import org.deeplearning4j.eval.Evaluation;
+import org.deeplearning4j.models.embeddings.loader.VectorsConfiguration;
 import org.deeplearning4j.nn.api.Layer;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
@@ -21,17 +24,17 @@ import org.deeplearning4j.optimize.api.IterationListener;
 import org.deeplearning4j.optimize.listeners.ScoreIterationListener;
 import org.deeplearning4j.spark.impl.multilayer.SparkDl4jMultiLayer;
 import org.deeplearning4j.spark.impl.paramavg.ParameterAveragingTrainingMaster;
+import org.deeplearning4j.text.tokenization.tokenizer.preprocessor.CommonPreprocessor;
+import org.deeplearning4j.text.tokenization.tokenizerfactory.DefaultTokenizerFactory;
 import org.deeplearning4j.util.ModelSerializer;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.dataset.DataSet;
+import org.nd4j.linalg.io.ClassPathResource;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
+
 import java.io.File;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.*;
 
 /**
  * Created with IntelliJ IDEA.
@@ -43,15 +46,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class SparkLstm {
 
-    /**
-     * 文本转换词汇表的维度
-     */
-    private static Integer maxlength = 663;
 
     /**
      * 词汇表的长度
      */
-    private static AtomicInteger VOCAB_SIZE = new AtomicInteger(0);
+    private static Accumulator<Integer> VOCAB_SIZE;
 
     /**
      * JavaSparkContext
@@ -59,34 +58,41 @@ public class SparkLstm {
     private static JavaSparkContext jsc;
 
     /**
-     * 文件基本路径
+     * 读取文件的基本路径
      */
     private static String basePath = System.getProperty("user.dir");
 
     /**
      * 模型训练批大小
      */
-    private static Integer batchSize = 36;
+    private static Broadcast<Integer> batchSize;
 
-    static {
+    /**
+     *  构造器
+     */
+    public SparkLstm() throws Exception{
+
+        // 设置 spark 的配置文件
         SparkConf sparkConf = new SparkConf();
         sparkConf.setMaster("local[*]").setAppName("deeplearning4j-lstm");
         jsc = new JavaSparkContext(sparkConf);
+
+        // 广播批处理大小
+        batchSize = jsc.broadcast(36);
+
     }
 
     /**
      * 模型训练
      *
-     * @param args
      * @throws Exception
      */
-    public void modelTrain(String[] args) throws Exception {
+    public void modelTrain() throws Exception {
 
         // 获取训练集和测试集
         DataHandle dataHandle = new DataHandle(jsc, basePath);
         JavaRDD<DataSet> dataSet = dataHandle.getDataSet();
         this.VOCAB_SIZE = dataHandle.VOCAB_SIZE;
-        this.maxlength = dataHandle.maxlength;
         JavaRDD<DataSet>[] javaRDDS = dataSet.randomSplit(new double[]{0.7, 0.3}, 11l);
         JavaRDD<DataSet> trainData = javaRDDS[0];
         JavaRDD<DataSet> testData = javaRDDS[1];
@@ -107,19 +113,19 @@ public class SparkLstm {
                 .l2(5 * 1e-4)
                 .updater(Updater.ADAM)
                 .list()
-                .layer(0, new EmbeddingLayer.Builder().nIn(VOCAB_SIZE.get()).nOut(lstmLayerSize).activation(Activation.IDENTITY).build())
+                .layer(0, new EmbeddingLayer.Builder().nIn(VOCAB_SIZE.value()).nOut(lstmLayerSize).activation(Activation.IDENTITY).build())
                 .layer(1, new GravesLSTM.Builder().nIn(lstmLayerSize).nOut(lstmLayerSize).activation(Activation.SOFTSIGN).build())
                 .layer(2, new RnnOutputLayer.Builder(LossFunctions.LossFunction.MCXENT)
                         .activation(Activation.SOFTMAX).nIn(lstmLayerSize).nOut(nOut).build())
                 .pretrain(false).backprop(true)
-                .setInputType(InputType.recurrent(VOCAB_SIZE.get()))
+                .setInputType(InputType.recurrent(VOCAB_SIZE.value()))
                 .build();
 
-        ParameterAveragingTrainingMaster trainMaster = new ParameterAveragingTrainingMaster.Builder(batchSize)
+        ParameterAveragingTrainingMaster trainMaster = new ParameterAveragingTrainingMaster.Builder(batchSize.getValue())
                 .workerPrefetchNumBatches(0)
                 .saveUpdater(true)
                 .averagingFrequency(5)
-                .batchSizePerWorker(batchSize)
+                .batchSizePerWorker(batchSize.getValue())
                 .build();
 
         //lstm 模型训练
@@ -156,23 +162,35 @@ public class SparkLstm {
         // 文本数据预处理
         DataHandle dataHandle = new DataHandle(jsc, basePath);
         INDArray testArray = dataHandle.str2INDArray(list);
-        HashMap<Double, String> labelMap = dataHandle.readPipeLine(basePath + "\\src\\main\\resources\\lstm\\pipLabel.txt");
+
+        List<String> type = new ArrayList<String>();
+        type.add("a");
+        type.add("b");
 
         // 加载模型并预测
         MultiLayerNetwork net = ModelSerializer.restoreMultiLayerNetwork(basePath + "\\src\\main\\resources\\lstm\\lstm-model.zip");
         INDArray output = net.output(testArray, Layer.TrainingMode.TEST);
-        INDArray row = output.getRow(0).getRow(0);
-        INDArray mean = row.mean(1);
-        double res = mean.getDouble(0);
-        System.out.println("");
+        INDArray tempINDArray = output.getRow(0);
+        double max = 0;
+        int index = 0;
+        for (int i = 0; i < tempINDArray.rows(); i++) {
+            INDArray row = tempINDArray.getRow(i);
+            System.out.println(row);
+            INDArray mean = row.mean(1);
+            if (mean.getDouble(0) > max){
+                index = i;
+                max = mean.getDouble(0);
+            }
+        }
+        System.out.println("下标为：" + type.get(index));
     }
 
 
     public static void main(String[] args) throws Exception {
-        new SparkLstm().modelTrain(args);
+//        new SparkLstm().modelTrain();
         String str = "老者还知道你很好奇，知道你有疑问，他还允许你提问，然后会用他会用他渊博的见识，耐心地为你分析，合情合理合情合理，还不乱结论下结论，好像在和你互动。";
         String str1 = "蒙牛牛你果然是个傻逼ps:你不冷啊还短裤咯";
-//        new SparkLstm().modelPre(str1);
+        new SparkLstm().modelPre(str);
     }
 
 }
